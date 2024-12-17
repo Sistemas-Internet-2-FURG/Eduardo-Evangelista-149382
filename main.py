@@ -1,158 +1,183 @@
-from flask import Flask, flash, json, render_template, redirect, session, request, url_for
-from database import init_db
+from flask import Flask, jsonify, request, session
+import jwt
+import datetime
 import operations
+from flask_cors import CORS
+from database import init_db
 
 init_db()
 app = Flask(__name__)
+CORS(app)
+app.config['SECRET_KEY'] = 'sua_chave_secreta'
 
-app.secret_key = 'adim'
+def get_decoded_token():
+    token = request.headers.get('Authorization')
+    if not token:
+        return None, jsonify({"error": "Unauthorized, please provide a token."}), 401
 
-# abrir o json e lê os dados
-# with open('alunos.json', 'r') as f:
-#     alunos = json.load(f)
+    try:
+        if token.startswith("Bearer "):
+            token = token.split(" ")[1]
+        else:
+            return None, jsonify({"error": "Invalid token format, please provide a Bearer token."}), 401
+
+        decoded_token = jwt.decode(token, app.config['SECRET_KEY'], algorithms=["HS256"])
+        return decoded_token, None, None
+    except jwt.ExpiredSignatureError:
+        return None, jsonify({"error": "Token expired, please log in again."}), 401
+    except jwt.InvalidTokenError:
+        return None, jsonify({"error": "Invalid token, please log in again."}), 401
 
 @app.route('/')
 def home():
     session.clear()
-    return render_template('home.html')
+    return jsonify({"message": "API Home - Session Cleared"})
 
-@app.route('/user/<username>')
+@app.route('/api/user/<username>', methods=['GET'])
 def user(username):
-    return f'Hello, {username}!'
+    return jsonify({"message": f"Hello, {username}!"})
 
-@app.route('/about')
+@app.route('/api/about', methods=['GET'])
 def about():
     text = 'This is the about page.'
-    return render_template('about.html', text=text)
+    return jsonify({"message": text})
 
-# ROUTE TO ADD
-@app.route('/chamada', methods=['GET', 'POST', 'DELETE'])
+@app.route('/api/chamada', methods=['GET', 'POST', 'DELETE'])
 def chamada():
-    if not session.get('username'):
-        return redirect(url_for('login'))
-    if not session.get('isTeacher'):
-        teachers = operations.retrieve_professors_for_students(session.get('user_id'))
-        return render_template('chamadaAluno.html', teachers=teachers)
-    professor_id = session.get('user_id')
+    decoded_token, error_response, status_code = get_decoded_token()
+    if error_response:
+        return error_response, status_code
 
-    if request.method == 'POST' and request.form.get('type') == 'Adicionar':
-        novo_nome = request.form['nome']
-        nova_matricula = request.form['matricula']
+    user_id = decoded_token['user_id']
+    is_teacher = decoded_token['isTeacher']
 
-        # Verificar se o usuário já existe
-        existing_user = operations.get_user_by_nome_matricula(nova_matricula, nome=novo_nome)
-        
-        if existing_user:
-            if existing_user.isTeacher:
-                alunos = operations.retrieve_students_for_professor(professor_id)
-                return render_template('chamada.html', alunos=alunos, error='Matrícula já existente para um professor')
-            
-            # Adicionar relação se o usuário for aluno
-            if operations.add_professor_student_relationship_if_exists(professor_id, nova_matricula, novo_nome):
-                alunos = operations.retrieve_students_for_professor(professor_id)
-                return render_template('chamada.html', alunos=alunos, success='Relação com aluno existente adicionada com sucesso')
-            else:
-                alunos = operations.retrieve_students_for_professor(professor_id)
-                return render_template('chamada.html', alunos=alunos, error='Erro ao adicionar relação com aluno existente')
-        
-        # Criar novo aluno e adicionar relação
-        aluno = operations.create_user(nome=novo_nome, senha='default_password', email=f'{novo_nome}@example.com', matricula=nova_matricula, isTeacher=False)
-        if aluno:
-            # Adicionar relação com o novo aluno
-            if operations.add_professor_student_relationship_if_exists(professor_id, aluno.matricula, aluno.nome):
-                alunos = operations.retrieve_students_for_professor(professor_id)
-                return render_template('chamada.html', alunos=alunos, success='Novo aluno criado e relação adicionada com sucesso')
-            else:
-                alunos = operations.retrieve_students_for_professor(professor_id)
-                return render_template('chamada.html', alunos=alunos, error='Erro ao adicionar relação com novo aluno')
-        else:
-            alunos = operations.retrieve_students_for_professor(professor_id)
-            return render_template('chamada.html', alunos=alunos, error='Erro ao criar novo aluno')
+    if not is_teacher:
+        teachers = operations.retrieve_professors_for_students(user_id)
+        return jsonify({"teachers": teachers})
 
-    # Para métodos GET e DELETE, ou se o método POST não for 'Adicionar', apenas renderiza a lista de alunos
-    alunos = operations.retrieve_students_for_professor(professor_id)
-    return render_template('chamada.html', alunos=alunos, session=session)
-
-
-# ROUTE TO DELETE
-@app.route('/chamada/<nome>', methods=['POST'])
-def removeUser(nome):
-    '''Remove a relação entre um professor e um aluno.'''
-    professor_id = session.get('user_id')
     if request.method == 'POST':
-        success = operations.remove_professor_aluno_relationship(professor_id, nome)
-        # if success:
-        #     alunos = operations.retrieve_students_for_professor(professor_id)
-        #     return render_template('chamada.html', alunos=alunos)
-        # else:
-        #     alunos = operations.retrieve_students_for_professor(professor_id)
-        #     return render_template('chamada.html', alunos=alunos)
-    return redirect(url_for('chamada'))
+        data = request.get_json()
+        if data['type'] == 'Adicionar':
+            novo_nome = data['nome']
+            nova_matricula = data['matricula']
 
-# ROUTE TO RECORD PRESENCE
-@app.route('/presenca/<nome>', methods=['POST'])
-def recordPresence(nome):
-    '''Registra a presença de um aluno.'''
-    professor_id = session.get('user_id')
-    aluno = operations.get_user_by_nome(nome)
-    if aluno:
+            existing_user = operations.get_user_by_nome_matricula(nova_matricula, nome=novo_nome)
+            
+            if existing_user:
+                if existing_user.isTeacher:
+                    return jsonify({"error": "Matrícula já existente para um professor"}), 400
+
+                if operations.add_professor_student_relationship_if_exists(user_id, nova_matricula, novo_nome):
+                    return jsonify({"message": "Relação com aluno existente adicionada com sucesso"})
+                else:
+                    return jsonify({"error": "Erro ao adicionar relação com aluno existente"}), 500
+
+            aluno = operations.create_user(nome=novo_nome, senha='default_password', email=f'{novo_nome}@example.com', matricula=nova_matricula, isTeacher=False)
+            if aluno:
+                if operations.add_professor_student_relationship_if_exists(user_id, aluno.matricula, aluno.nome):
+                    return jsonify({"message": "Novo aluno criado e relação adicionada com sucesso"})
+                else:
+                    return jsonify({"error": "Erro ao adicionar relação com novo aluno"}), 500
+            else:
+                return jsonify({"error": "Erro ao criar novo aluno"}), 500
+
+    alunos = operations.retrieve_students_for_professor(user_id)
+    return jsonify({"alunos": alunos})
+
+@app.route('/api/chamada/<nome>', methods=['DELETE'])
+def remove_user(nome):
+    decoded_token, error_response, status_code = get_decoded_token()
+    if error_response:
+        return error_response, status_code
+
+    professor_id = decoded_token['user_id']
+
+    success = operations.remove_professor_aluno_relationship(professor_id, nome)
+    if success:
+        return jsonify({"message": f"Relação com {nome} removida com sucesso"})
+    else:
+        return jsonify({"error": f"Falha ao remover relação com {nome}"}), 500
+
+@app.route('/api/presenca/<nome>/<matricula>', methods=['POST'])
+def record_presence(nome, matricula):
+    decoded_token, error_response, status_code = get_decoded_token()
+    if error_response:
+        return error_response, status_code
+
+    professor_id = decoded_token['user_id']
+    aluno = operations.get_user_by_nome_matricula(matricula, nome)
+    if aluno != None:
         professor_aluno_id = operations.get_professor_aluno_id(professor_id, aluno.id)
-        if professor_aluno_id:
+        print(professor_aluno_id)
+        if professor_aluno_id != None:
             success = operations.record_presence(professor_aluno_id)
             if success:
-                flash(f'Presença de {nome} registrada com sucesso!')
+                return jsonify({"message": f"Presença de {nome} registrada com sucesso"})
             else:
-                flash(f'Falha ao registrar presença de {nome}.')
-    return redirect(url_for('chamada'))
+                return jsonify({"error": f"Falha ao registrar presença de {nome}"}), 500
+    return jsonify({"error": f"Aluno {nome} não encontrado"}), 404
 
-
-# ROUTE TO LOGIN
-@app.route('/login', methods=['GET', 'POST'])
+@app.route('/api/login', methods=['POST'])
 def login():
-    if request.method == 'GET':
-        return render_template('login.html')
-    if request.method == 'POST':
-        email = request.form['email']
-        password = request.form['password']
+    data = request.get_json()
+    matricula = data['matricula']
+    password = data['password']
 
+    user = operations.login(matricula=matricula, senha=password)
+    if user:
+        # Cria o token JWT com payload contendo informações do usuário
+        token = jwt.encode({
+            'user_id': user.id,
+            'username': user.nome,
+            'matricula': user.matricula,
+            'isTeacher': user.isTeacher,
+            'exp': datetime.datetime.utcnow() + datetime.timedelta(hours=1)
+        }, app.config['SECRET_KEY'], algorithm="HS256").decode('UTF-8')
 
-        # Verificar o login do usuário
-        user = operations.login(email=email, senha=password)
-        if user:
-            session['username'] = user.nome
-            session['matricula'] = user.matricula  # Armazenar a matrícula do aluno na sessão
-            session['user_id'] = user.id
-            session['isTeacher'] = user.isTeacher
-            app.secret_key = email
-            return redirect('chamada') 
-        else:
-            return render_template('login.html', error='Email ou senha inválidos')
+        return jsonify({
+            "message": "Login bem-sucedido",
+            "token": token,
+            "user": {
+                "nome": user.nome,
+                "matricula": user.matricula,
+                "isTeacher": user.isTeacher
+            }
+        })
+    else:
+        return jsonify({"error": "Matrícula ou senha inválidos"}), 401
 
-# ROUTE TO SIGNIN
-@app.route('/signin', methods=['GET', 'POST'])
+@app.route('/api/signin', methods=['POST'])
 def signin():
-    if request.method == 'GET':
-        return render_template('signin.html')
-    if request.method == 'POST':
-        nome = request.form['name']
-        email = request.form['email']
-        matricula = request.form['studentNumber']
-        password = request.form['password']
-        is_teacher = 'isTeacher' in request.form  # Verifica se o checkbox está marcado
-        # Criar o usuário
-        user = operations.create_user(nome=nome, senha=password, email=email, matricula=matricula, isTeacher=is_teacher)
-        
-        if user:            
-            session['username'] = user.nome
-            session['matricula'] = user.matricula  # Armazenar a matrícula do aluno na sessão
-            session['user_id'] = user.id
-            session['isTeacher'] = user.isTeacher
-            app.secret_key = email  # Usar o email como chave secreta para a sessão
-            return redirect('chamada') 
-        else:
-            return render_template('signin.html', error='Não foi possível criar o usuário.')
+    data = request.get_json()
+    nome = data['name']
+    email = data['email']
+    matricula = data['studentNumber']
+    password = data['password']
+    is_teacher = data['isTeacher']
 
+    user = operations.create_user(nome=nome, senha=password, email=email, matricula=matricula, isTeacher=is_teacher)
+    
+    if user:
+        # Cria o token JWT com payload contendo informações do usuário
+        token = jwt.encode({
+            'user_id': user.id,
+            'username': user.nome,
+            'matricula': user.matricula,
+            'isTeacher': user.isTeacher,
+            'exp': datetime.datetime.utcnow() + datetime.timedelta(hours=1)
+        }, app.config['SECRET_KEY'], algorithm="HS256").decode('UTF-8')
 
+        return jsonify({
+            "message": "Usuário criado com sucesso",
+            "token": token,
+            "user": {
+                "nome": user.nome,
+                "matricula": user.matricula,
+                "isTeacher": user.isTeacher
+            }
+        })
+    else:
+        return jsonify({"error": "Não foi possível criar o usuário."}), 500
 
 if __name__ == '__main__':
-    app.run(debug=True) 
+    app.run(debug=True)

@@ -14,10 +14,10 @@ def create_user(nome: str, senha: str, email: str, matricula: str, isTeacher: bo
         print(f"Erro ao criar usuário: {e}")  # Log do erro para depuração
         return None
 
-def login(email: str, senha: str):
-    """Realiza o login de um usuário verificando o email e a senha."""
+def login(matricula: str, senha: str):
+    """Realiza o login de um usuário verificando a matrícula e a senha."""
     try:
-        user = db_session.query(User).filter_by(email=email, senha=senha).first()
+        user = db_session.query(User).filter_by(matricula=matricula, senha=senha).first()
         return user
     except Exception as e:
         print(f"Erro ao realizar login: {e}")  # Log do erro para depuração
@@ -141,6 +141,7 @@ def retrieve_professors_for_students(student_id: int):
 def get_user_by_nome_matricula(matricula: str,  nome: str):
     """Recupera um usuário pelo número de matrícula."""
     try:
+        print(matricula, nome)
         user = db_session.query(User).filter_by(matricula=matricula, nome=nome).first()
         return user
     except Exception as e:
@@ -161,19 +162,12 @@ def add_professor_student_relationship_if_exists(professor_id: int, matricula: s
     except Exception as e:
         print(f"Erro ao adicionar relação professor-aluno: {e}")  # Log do erro para depuração
         return False
-    
-def get_user_by_nome(nome: str):
-    """Recupera um usuário pelo nome."""
-    try:
-        return db_session.query(User).filter_by(nome=nome).first()
-    except Exception as e:
-        print(f"Erro ao recuperar usuário por nome: {e}")
-        return None
 
 def get_professor_aluno_id(professor_id: int, aluno_id: int):
     """Obtém o ID da relação entre professor e aluno."""
     try:
         relationship = db_session.query(ProfessorAluno).filter_by(professor_id=professor_id, aluno_id=aluno_id).first()
+        print("Relação", professor_id, aluno_id, relationship)
         return relationship.id if relationship else None
     except Exception as e:
         print(f"Erro ao recuperar relação professor-aluno: {e}")

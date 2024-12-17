@@ -12,6 +12,7 @@ db_path = os.getenv("DB_PATH")
 if not db_path:
     raise ValueError("DB_PATH environment variable is not set")
 
+print(f"Using database at {db_path}")
 engine = create_engine('sqlite:///' + db_path)
 db_session = scoped_session(sessionmaker(autocommit=False,
                                          autoflush=False,
